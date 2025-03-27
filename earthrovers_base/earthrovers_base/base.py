@@ -33,7 +33,7 @@ class BaseNode(Node):
         self.declare_parameter("max_speed_ms", 0.94)
         # TODO: Need to determine this value. Guessing 1.57 rad/s for now.
         self.declare_parameter("max_angular_speed_rads", 1.57)
-        self.declare_parameter("earthrover_sdk_url", "http://127.0.0.1:8000")
+        self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
         self.declare_parameter("data_publish_rate_hz", 1.0)
         # http://wiki.sunfounder.cc/images/7/72/QMC5883L-Datasheet-1.0.pdf
         self.declare_parameter("magnetometer_sensitivity_lsb_per_gauss", 3000)

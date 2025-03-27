@@ -26,7 +26,7 @@ class WaypointReceiverNode(Node):
         check_checkpoint_reached_period = 5.0
         self.create_timer(get_checkpoint_list_period, self.get_checkpoints_list)
         self.create_timer(check_checkpoint_reached_period, self.check_checkpoint_reached)
-        self.earthrover_sdk_url = "http://127.0.0.1:8000"
+        self.earthrover_sdk_url = "http://host.docker.internal:8000"
 
     def get_checkpoints_list(self):
         checkpoints_list = GeoPath()

@@ -17,7 +17,7 @@ class MissionController(Node):
         super().__init__("mission_controller")
 
         # Declare parameters.
-        self.declare_parameter("earthrover_sdk_url", "http://127.0.0.1:8000")
+        self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
 
         # Create mission management services.
         self._start_mission_srv = self.create_service(StartMission, "start_mission", self._start_mission_callback)
