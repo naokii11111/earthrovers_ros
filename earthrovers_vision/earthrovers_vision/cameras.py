@@ -14,8 +14,11 @@ from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from ament_index_python.packages import get_package_share_directory
 
+NUM_REQUESTS = 1
+
 def get_camera_params(filepath: str) -> CameraInfo:
     camera_info = CameraInfo()
+
     with open(filepath, "r") as f:
         camera_params = yaml.safe_load(f)
         camera_info.width = camera_params["image_width"]
@@ -70,39 +73,67 @@ class AsyncImagePublisher(Node):
     async def fetch_images(self):
         async with aiohttp.ClientSession() as session:
             while rclpy.ok():
-                try:
-                    async with session.get(self.camera_url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            await self.image_queue.put(data)
-                        else:
-                            self.get_logger().warn(f"Failed to fetch image, status code: {response.status}")
-                except Exception as e:
-                    self.get_logger().error(f"Error fetching image: {e}")
+                # making requests refferign the number of NUM_REQUESTS
+                tasks = [session.get(self.camera_url) for _ in range(NUM_REQUESTS)]
+                # MODIFIED(This can solve burst problem)
+                for task in asyncio.as_completed(tasks):
+                    try:
+                        response = await task
+                    except Exception as e:
+                        self.get_logger().error(f"Request error: {e}")
+                        continue
+                    if response.status == 200:
+                        data = await response.json()
+                        await self.image_queue.put(data)
+                    else:
+                        self.get_logger().warn(f"Failed to fetch image, status code: {response.status}")
+                # 次
+                # await asyncio.sleep(0.1)
+
+
+    async def process_image(self, key: str, data: dict, timestamp, publisher, info, info_publisher, frame_id: str):
+        loop = asyncio.get_running_loop()
+        # decoding
+        frame = await loop.run_in_executor(None, self.decode_image, data[key])
+        if frame is None:
+            return
+        if key == "map_frame":
+            map_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+            map_msg.header.stamp = timestamp
+            map_msg.header.frame_id = frame_id
+            publisher.publish(map_msg)
+        else:
+            self.publish_image(frame, publisher, info, info_publisher, timestamp, frame_id)
+
 
     async def publish_images(self):
         while rclpy.ok():
             data = await self.image_queue.get()
-
             timestamp = self.get_clock().now().to_msg()
 
+            # MO
             if "front_frame" in data:
-                front_frame = self.decode_image(data["front_frame"])
-                self.publish_image(front_frame, self.front_pub, self.front_info, self.front_info_pub, timestamp, "front_camera_link")
-
+                asyncio.create_task(
+                    self.process_image("front_frame", data, timestamp,
+                                    self.front_pub, self.front_info, self.front_info_pub,
+                                    "front_camera_link")
+                )
             if "rear_frame" in data:
-                rear_frame = self.decode_image(data["rear_frame"])
-                self.publish_image(rear_frame, self.rear_pub, self.rear_info, self.rear_info_pub, timestamp, "rear_camera_link")
-
+                asyncio.create_task(
+                    self.process_image("rear_frame", data, timestamp,
+                                    self.rear_pub, self.rear_info, self.rear_info_pub,
+                                    "rear_camera_link")
+                )
             if "map_frame" in data:
-                map_frame = self.decode_image(data["map_frame"])
-                if map_frame is not None:
-                    map_msg = self.bridge.cv2_to_imgmsg(map_frame, encoding="bgr8")
-                    map_msg.header.stamp = timestamp
-                    map_msg.header.frame_id = "base_link"
-                    self.map_pub.publish(map_msg)
+                asyncio.create_task(
+                    self.process_image("map_frame", data, timestamp,
+                                    self.map_pub, None, None,
+                                    "base_link")
+                )
 
             self.image_queue.task_done()
+
+
 
     def decode_image(self, base64_str):
         try:

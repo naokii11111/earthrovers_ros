@@ -281,13 +281,13 @@ class BaseNode(Node):
         # the magnetometer and IMU data. For now, just publishing what is
         # computed by the SDK.
         orientation_msg = Float32()
-        # orientation_msg.data = float(response_json["orientation"])
+        orientation_msg.data = float(response_json["orientation"])
 
-        # The orientation from the SDK is not correct, so calculate it from the raw magnetometer data.
-        orientation = -np.rad2deg(np.arctan2(magnetic_field_msg.magnetic_field.y, magnetic_field_msg.magnetic_field.x))
-        if orientation < 0:
-            orientation += 360
-        orientation_msg.data = orientation.item()
+        # # The orientation from the SDK is not correct, so calculate it from the raw magnetometer data.
+        # orientation = -np.rad2deg(np.arctan2(magnetic_field_msg.magnetic_field.y, magnetic_field_msg.magnetic_field.x))
+        # if orientation < 0:
+        #     orientation += 360
+        # orientation_msg.data = orientation.item()
         self._ori_pub.publish(orientation_msg)
 
         # Publish the battery state data.
