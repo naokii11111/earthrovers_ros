@@ -4,6 +4,7 @@ for relaying commanded velocity messages to the Earth Rover SDK.
 import time
 import requests
 import rclpy
+import numpy as np
 from rclpy.time import Time
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
@@ -265,12 +266,12 @@ class BaseNode(Node):
             gps_msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
             # Only publish the GPS message if the GPS data has changed. Again,
             # this is a super hacky fix that should be removed eventually.
-            if gps_msg.latitude != self._last_latitude or gps_msg.longitude != self._last_longitude or self._temp_initial_gps_pub_counter < 2:
-                if self._temp_initial_gps_pub_counter < 3:
-                    self._temp_initial_gps_pub_counter += 1
-                self._last_latitude = gps_msg.latitude
-                self._last_longitude = gps_msg.longitude
-                self._gps_pub.publish(gps_msg)
+            # if gps_msg.latitude != self._last_latitude or gps_msg.longitude != self._last_longitude or self._temp_initial_gps_pub_counter < 2:
+            if self._temp_initial_gps_pub_counter < 3:
+                self._temp_initial_gps_pub_counter += 1
+            self._last_latitude = gps_msg.latitude
+            self._last_longitude = gps_msg.longitude
+            self._gps_pub.publish(gps_msg)
         except Exception as e:
             self.get_logger().error(f"Failed to parse/publish GPS data: {e}")
 
@@ -280,7 +281,13 @@ class BaseNode(Node):
         # the magnetometer and IMU data. For now, just publishing what is
         # computed by the SDK.
         orientation_msg = Float32()
-        orientation_msg.data = float(response_json["orientation"])
+        # orientation_msg.data = float(response_json["orientation"])
+
+        # The orientation from the SDK is not correct, so calculate it from the raw magnetometer data.
+        orientation = -np.rad2deg(np.arctan2(magnetic_field_msg.magnetic_field.y, magnetic_field_msg.magnetic_field.x))
+        if orientation < 0:
+            orientation += 360
+        orientation_msg.data = orientation.item()
         self._ori_pub.publish(orientation_msg)
 
         # Publish the battery state data.

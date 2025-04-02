@@ -18,3 +18,7 @@ RUN apt-get update && apt-get install -y \
     python3-pyproj \
     ros-humble-geographic-info \
     && rm -rf /var/lib/apt/lists/*
+
+COPY ./dockerfiles/development/ros_entrypoint.sh /opt/ros_entrypoint.sh
+RUN chmod +x /opt/ros_entrypoint.sh
+# ENTRYPOINT ["/opt/ros_entrypoint.sh"]

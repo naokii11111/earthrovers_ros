@@ -14,8 +14,6 @@ from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from ament_index_python.packages import get_package_share_directory
 
-CAMERA_URL = "http://host.docker.internal:8000/v2/screenshot"
-
 def get_camera_params(filepath: str) -> CameraInfo:
     camera_info = CameraInfo()
     with open(filepath, "r") as f:
@@ -32,6 +30,9 @@ def get_camera_params(filepath: str) -> CameraInfo:
 class AsyncImagePublisher(Node):
     def __init__(self):
         super().__init__('async_image_publisher')
+
+        self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
+        self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/screenshot"
         
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -70,7 +71,7 @@ class AsyncImagePublisher(Node):
         async with aiohttp.ClientSession() as session:
             while rclpy.ok():
                 try:
-                    async with session.get(CAMERA_URL) as response:
+                    async with session.get(self.camera_url) as response:
                         if response.status == 200:
                             data = await response.json()
                             await self.image_queue.put(data)
@@ -78,8 +79,6 @@ class AsyncImagePublisher(Node):
                             self.get_logger().warn(f"Failed to fetch image, status code: {response.status}")
                 except Exception as e:
                     self.get_logger().error(f"Error fetching image: {e}")
-
-                await asyncio.sleep(0.1)
 
     async def publish_images(self):
         while rclpy.ok():
