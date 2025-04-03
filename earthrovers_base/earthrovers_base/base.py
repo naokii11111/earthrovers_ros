@@ -5,8 +5,14 @@ import time
 import requests
 import rclpy
 import numpy as np
+from threading import Lock
+
 from rclpy.time import Time
 from rclpy.node import Node
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+
+
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, MagneticField, NavSatFix, BatteryState
 from std_msgs.msg import Float32
@@ -38,6 +44,36 @@ class BaseNode(Node):
         self.declare_parameter("data_publish_rate_hz", 1.0)
         # http://wiki.sunfounder.cc/images/7/72/QMC5883L-Datasheet-1.0.pdf
         self.declare_parameter("magnetometer_sensitivity_lsb_per_gauss", 3000)
+        self.declare_parameter("cmd_vel_publish_rate_hz", 10.0)
+        self.declare_parameter("cmd_vel_timeout_sec", 0.5)
+
+        # Create a timer for periodically hitting /data endpoint for gps, imu,
+        # battery, and other data.
+        self._data_timer = self.create_timer(timer_period_sec=1.0 / self.get_parameter("data_publish_rate_hz").get_parameter_value().double_value,
+                                             callback=self._get_and_publish_data,
+                                             callback_group=MutuallyExclusiveCallbackGroup())
+
+        # Create publishers for IMU, Magnetic Field, Odometry, and GPS data.
+        self._imu_pub = self.create_publisher(msg_type=Imu, topic="imu", qos_profile=10)
+        self._magnetic_field_pub = self.create_publisher(msg_type=MagneticField, topic="magnetic_field", qos_profile=10)
+        self._gps_pub = self.create_publisher(msg_type=NavSatFix, topic="gps", qos_profile=10)
+        self._ori_pub = self.create_publisher(msg_type=Float32, topic="orientation", qos_profile=10)
+        self._battery_pub = self.create_publisher(msg_type=BatteryState, topic="battery", qos_profile=10)
+
+        # Create a variable to store the last time a cmd_vel message was
+        # received. This is used to determine if the rover should stop moving
+        # when no cmd_vel messages are received for a certain period of time.
+        self._last_cmd_vel_time = Time(seconds=0.0)
+        # Create a variable to store the last cmd_vel received. This is
+        # used to send the last cmd_vel message to the SDK API when the timer
+        # callback is called.
+        self._last_cmd_vel = (0.0, 0.0)
+        self._cmd_vel_lock = Lock()
+
+        self.min_linear_vel_x = -self.get_parameter("max_speed_ms").get_parameter_value().double_value
+        self.max_linear_vel_x = self.get_parameter("max_speed_ms").get_parameter_value().double_value
+        self.min_angular_vel_z = -self.get_parameter("max_angular_speed_rads").get_parameter_value().double_value
+        self.max_angular_vel_z = self.get_parameter("max_angular_speed_rads").get_parameter_value().double_value
 
         # Create a subscriber for cmd_vel Twist messages. Will parse these and
         # hit the control endpoint with the normalized values.
@@ -46,17 +82,13 @@ class BaseNode(Node):
                                                      callback=self._cmd_vel_callback,
                                                      qos_profile=10)
 
-        # Create a timer for periodically hitting /data endpoint for gps, imu,
-        # battery, and other data.
-        self._data_timer = self.create_timer(timer_period_sec=1.0 / self.get_parameter("data_publish_rate_hz").get_parameter_value().double_value,
-                                             callback=self._get_and_publish_data)
-
-        # Create publishers for IMU, Magnetic Field, Odometry, and GPS data.
-        self._imu_pub = self.create_publisher(msg_type=Imu, topic="imu", qos_profile=10)
-        self._magnetic_field_pub = self.create_publisher(msg_type=MagneticField, topic="magnetic_field", qos_profile=10)
-        self._gps_pub = self.create_publisher(msg_type=NavSatFix, topic="gps", qos_profile=10)
-        self._ori_pub = self.create_publisher(msg_type=Float32, topic="orientation", qos_profile=10)
-        self._battery_pub = self.create_publisher(msg_type=BatteryState, topic="battery", qos_profile=10)
+        # Create a timer loop to publish cmd_vel messages at a fixed rate.
+        self._cmd_vel_timer = self.create_timer(
+            timer_period_sec=1.0 / self.get_parameter("cmd_vel_publish_rate_hz").get_parameter_value().double_value,
+            callback=self._cmd_vel_timer_callback,
+            callback_group=MutuallyExclusiveCallbackGroup()
+        )
+        
 
         # Hacky fix: Create variables to store the last latitude and longitude
         # values. We will check against these values each time we get a new
@@ -72,44 +104,65 @@ class BaseNode(Node):
         self._temp_initial_gps_pub_counter = 0
 
     def _cmd_vel_callback(self, twist_msg: Twist) -> None:
-        """Callback function for the cmd_vel topic. Receives a Twist message,
-        normalizes the angular and linear velocities, and sends the normalized
-        values to the Earth Rover SDK API via an HTTP POST request.
+        """
+        Callback to receive Twist messages on the cmd_vel topic. This function
+        normalizes the linear and angular velocities and sets the last
+        cmd_vel message to the received message. It also updates the last
+        cmd_vel time to the current time.
 
         Args:
             twist_msg (Twist): The received Twist message.
         """
-
-        max_linear_vel_x = self.get_parameter("max_speed_ms").get_parameter_value().double_value
-        min_linear_vel_x = -max_linear_vel_x
-        max_angular_vel_z = self.get_parameter("max_angular_speed_rads").get_parameter_value().double_value
-        min_angular_vel_z = -max_angular_vel_z
-
-        # For the frodobots skid-steer platform, only considering the
-        # x-component of the commanded linear velocity and the z-component
-        # (yaw-rate) of the commanded angular velocity. Additionally, both the
-        # linear and angular velocities are to be between [-1, 1] per the SDK:
-        # https://github.com/frodobots-org/earth-rovers-sdk?tab=readme-ov-file#post-control
-        # To convert the linear and angular values from m/s in the Twist message
-        # to be in the [-1, 1] scale, we perform min-max normalization on the
-        # linear and angular velocities. See the following link for the formula:
-        # https://en.wikipedia.org/wiki/Feature_scaling#Rescaling_(min-max_normalization)
-        # We also clamp the normalized values in case the received twist
-        # messages exceed the maximum or minimum values velocities in m/s.
         SCALE_MIN = -1.0
         SCALE_MAX = 1.0
-        normalized_linear_vel_x = min(SCALE_MIN + (twist_msg.linear.x - min_linear_vel_x)*(SCALE_MAX - SCALE_MIN) / (max_linear_vel_x - min_linear_vel_x), SCALE_MAX)
-        normalized_angular_vel_z = min(SCALE_MIN + (twist_msg.angular.z - min_angular_vel_z)*(SCALE_MAX - SCALE_MIN) / (max_angular_vel_z - min_angular_vel_z), SCALE_MAX)
+        normalized_linear_vel_x = min(SCALE_MIN + (twist_msg.linear.x - self.min_linear_vel_x)*(SCALE_MAX - SCALE_MIN) / (self.max_linear_vel_x - self.min_linear_vel_x), SCALE_MAX)
+        normalized_angular_vel_z = min(SCALE_MIN + (twist_msg.angular.z - self.min_angular_vel_z)*(SCALE_MAX - SCALE_MIN) / (self.max_angular_vel_z - self.min_angular_vel_z), SCALE_MAX)
         self.get_logger().debug(f"NORM LINEAR VEL: {normalized_linear_vel_x}, NORM ANGULAR VEL: {normalized_angular_vel_z}")
 
+        # Update the last cmd_vel message and time.
+        with self._cmd_vel_lock:
+            self._last_cmd_vel = (normalized_linear_vel_x, normalized_angular_vel_z)
+            self._last_cmd_vel_time = Time(seconds=self.get_clock().now().seconds_nanoseconds()[0])
+
+    def _cmd_vel_timer_callback(self) -> None:
+        """Callback function for the cmd_vel timer. This function checks if
+        enough time has passed since the last cmd_vel message was received. If
+        so, it sends the last cmd_vel message to the Earth Rover SDK API.
+
+        If no cmd_vel messages have been received for a certain period of time,
+        the rover will stop moving by sending 0 velocities to the SDK API.
+        """
+
+        # Check if too much time has passed since the last cmd_vel message was
+        # received.
+        now = Time(seconds=self.get_clock().now().seconds_nanoseconds()[0])
+        elapsed_time = now - self._last_cmd_vel_time
+        if elapsed_time.nanoseconds > self.get_parameter("cmd_vel_timeout_sec").get_parameter_value().double_value * 1e9:
+            with self._cmd_vel_lock:
+                # Send 0 velocities to the SDK API to stop the rover.
+                self._send_cmd_vel_to_sdk(0.0, 0.0)
+        else:
+            with self._cmd_vel_lock:
+                last_cmd_vel = self._last_cmd_vel
+            # Send the last cmd_vel message to the SDK API.
+            self._send_cmd_vel_to_sdk(last_cmd_vel[0], last_cmd_vel[1])
+
+    def _send_cmd_vel_to_sdk(self, linear_vel_x: float, angular_vel_z: float) -> None:
+        """Helper function to send the last cmd_vel message to the Earth Rover
+        SDK API. This function is called by the cmd_vel timer callback.
+
+        Args:
+            linear_vel_x (float): The linear velocity in the x direction.
+            angular_vel_z (float): The angular velocity in the z direction.
+        """
         # Send the normalized linear and angular velocities to the SDK API.
         # First, grab the SDK API URL from the parameters.
         sdk_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value
         # Next, create the JSON payload to send to the SDK API.
         payload = {
             "command": {
-                "linear": normalized_linear_vel_x,
-                "angular": normalized_angular_vel_z
+                "linear": linear_vel_x,
+                "angular": angular_vel_z
             }
         }
         # Finally, send the POST request to the SDK API.
@@ -124,14 +177,68 @@ class BaseNode(Node):
             self.get_logger().debug(f"POST response: {response.text}")
             self.get_logger().debug(f"POST request took {end - start} seconds.")
 
-    # TODO: In the future, it may be wise to create a timer callback function
-    # that sends the most recently received twist message to the SDK API at a
-    # fixed rate, so as to prevent upstream nodes flooding the SDK API with more
-    # messages than it can handle. Could also serve as a safe-guard, where if no
-    # twist messages are received for a certain period of time, we could then
-    # just request 0 velocities from the SDK API to stop the rover as a
-    # failsafe. Could then also organize that timer callback to be implemented
-    # as a state machine.
+
+    # def _cmd_vel_callback(self, twist_msg: Twist) -> None:
+    #     """Callback function for the cmd_vel topic. Receives a Twist message,
+    #     normalizes the angular and linear velocities, and sends the normalized
+    #     values to the Earth Rover SDK API via an HTTP POST request.
+
+    #     Args:
+    #         twist_msg (Twist): The received Twist message.
+    #     """
+
+    #     max_linear_vel_x = self.get_parameter("max_speed_ms").get_parameter_value().double_value
+    #     min_linear_vel_x = -max_linear_vel_x
+    #     max_angular_vel_z = self.get_parameter("max_angular_speed_rads").get_parameter_value().double_value
+    #     min_angular_vel_z = -max_angular_vel_z
+
+    #     # For the frodobots skid-steer platform, only considering the
+    #     # x-component of the commanded linear velocity and the z-component
+    #     # (yaw-rate) of the commanded angular velocity. Additionally, both the
+    #     # linear and angular velocities are to be between [-1, 1] per the SDK:
+    #     # https://github.com/frodobots-org/earth-rovers-sdk?tab=readme-ov-file#post-control
+    #     # To convert the linear and angular values from m/s in the Twist message
+    #     # to be in the [-1, 1] scale, we perform min-max normalization on the
+    #     # linear and angular velocities. See the following link for the formula:
+    #     # https://en.wikipedia.org/wiki/Feature_scaling#Rescaling_(min-max_normalization)
+    #     # We also clamp the normalized values in case the received twist
+    #     # messages exceed the maximum or minimum values velocities in m/s.
+    #     SCALE_MIN = -1.0
+    #     SCALE_MAX = 1.0
+    #     normalized_linear_vel_x = min(SCALE_MIN + (twist_msg.linear.x - min_linear_vel_x)*(SCALE_MAX - SCALE_MIN) / (max_linear_vel_x - min_linear_vel_x), SCALE_MAX)
+    #     normalized_angular_vel_z = min(SCALE_MIN + (twist_msg.angular.z - min_angular_vel_z)*(SCALE_MAX - SCALE_MIN) / (max_angular_vel_z - min_angular_vel_z), SCALE_MAX)
+    #     self.get_logger().debug(f"NORM LINEAR VEL: {normalized_linear_vel_x}, NORM ANGULAR VEL: {normalized_angular_vel_z}")
+
+    #     # Send the normalized linear and angular velocities to the SDK API.
+    #     # First, grab the SDK API URL from the parameters.
+    #     sdk_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value
+    #     # Next, create the JSON payload to send to the SDK API.
+    #     payload = {
+    #         "command": {
+    #             "linear": normalized_linear_vel_x,
+    #             "angular": normalized_angular_vel_z
+    #         }
+    #     }
+    #     # Finally, send the POST request to the SDK API.
+    #     start = time.perf_counter()
+    #     try:
+    #         response = requests.post(f"{sdk_url}/control", json=payload)
+    #     except requests.exceptions.RequestException as e:
+    #         self.get_logger().error(f"POST request to SDK API failed: {e}")
+    #         return
+    #     else:
+    #         end = time.perf_counter()
+    #         self.get_logger().debug(f"POST response: {response.text}")
+    #         self.get_logger().debug(f"POST request took {end - start} seconds.")
+
+    # # TODO: In the future, it may be wise to create a timer callback function
+    # # that sends the most recently received twist message to the SDK API at a
+    # # fixed rate, so as to prevent upstream nodes flooding the SDK API with more
+    # # messages than it can handle. Could also serve as a safe-guard, where if no
+    # # twist messages are received for a certain period of time, we could then
+    # # just request 0 velocities from the SDK API to stop the rover as a
+    # # failsafe. Could then also organize that timer callback to be implemented
+    # # as a state machine.
 
     def _get_and_publish_data(self) -> None:
         """Callback function for the data_timer. Sends an HTTP GET request to
@@ -305,8 +412,16 @@ class BaseNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     base_node = BaseNode()
-    rclpy.spin(base_node)
-    rclpy.shutdown()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(base_node)
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        base_node.get_logger().info("Keyboard interrupt, shutting down...")
+    finally:
+        executor.shutdown()
+        base_node.destroy_node()        
+    
 
 if __name__ == "__main__":
     main()

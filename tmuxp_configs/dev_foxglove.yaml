@@ -11,7 +11,7 @@ windows:
     - shell_command:
       - ros2 launch earthrovers_bringup rover_tf_launch.py
     - shell_command:
-      - ros2 run earthrovers_base base --ros-args --log-level debug -p earthrover_sdk_url:=http://localhost:8000
+      - ros2 run earthrovers_base base --ros-args --log-level debug -p earthrover_sdk_url:=http://localhost:8000 -p max_speed_ms:=1.0 -p max_angular_speed_rads:=1.0
     - shell_command:
       - ros2 run earthrovers_navigation nav
     - shell_command:
