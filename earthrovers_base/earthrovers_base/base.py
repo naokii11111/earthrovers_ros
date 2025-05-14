@@ -45,7 +45,8 @@ class BaseNode(Node):
         # http://wiki.sunfounder.cc/images/7/72/QMC5883L-Datasheet-1.0.pdf
         self.declare_parameter("magnetometer_sensitivity_lsb_per_gauss", 3000)
         self.declare_parameter("cmd_vel_publish_rate_hz", 10.0)
-        self.declare_parameter("cmd_vel_timeout_sec", 0.5)
+        self.declare_parameter("cmd_vel_timeout_sec", 1.0)
+        self.declare_parameter("robot_type", "zero")
 
         # Create a timer for periodically hitting /data endpoint for gps, imu,
         # battery, and other data.
@@ -69,6 +70,8 @@ class BaseNode(Node):
         # callback is called.
         self._last_cmd_vel = (0.0, 0.0)
         self._cmd_vel_lock = Lock()
+
+        self.robot_type = self.get_parameter("robot_type").get_parameter_value().string_value
 
         self.min_linear_vel_x = -self.get_parameter("max_speed_ms").get_parameter_value().double_value
         self.max_linear_vel_x = self.get_parameter("max_speed_ms").get_parameter_value().double_value
@@ -390,10 +393,11 @@ class BaseNode(Node):
         orientation_msg = Float32()
         orientation_msg.data = float(response_json["orientation"])
 
-        # # The orientation from the SDK is not correct, so calculate it from the raw magnetometer data.
-        # orientation = -np.rad2deg(np.arctan2(magnetic_field_msg.magnetic_field.y, magnetic_field_msg.magnetic_field.x))
-        # if orientation < 0:
-        #     orientation += 360
+        # The orientation from the SDK is not correct, so calculate it from the raw magnetometer data.
+        orientation = -np.rad2deg(np.arctan2(-magnetic_field_msg.magnetic_field.y, magnetic_field_msg.magnetic_field.x))
+        if orientation < 0:
+            orientation += 360
+        self.get_logger().info(f"Oris: {orientation}, {orientation_msg.data}")
         # orientation_msg.data = orientation.item()
         self._ori_pub.publish(orientation_msg)
 

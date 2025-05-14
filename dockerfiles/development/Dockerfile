@@ -16,8 +16,12 @@ RUN apt-get update && apt-get install -y \
     python3-yaml \
     python3-transforms3d \
     python3-pyproj \
+    python3-pip \
     ros-humble-geographic-info \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir filterpy scikit-learn \
+    && rm -rf /root/.cache/pip
 
 COPY dockerfiles/development/ros_entrypoint.sh /opt/ros_entrypoint.sh
 RUN chmod +x /opt/ros_entrypoint.sh

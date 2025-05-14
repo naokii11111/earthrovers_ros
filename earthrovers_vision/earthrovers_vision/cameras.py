@@ -35,7 +35,9 @@ class AsyncImagePublisher(Node):
         super().__init__('async_image_publisher')
 
         self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
-        self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/screenshot"
+        # self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/screenshot"
+        self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/front"
+
         
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -70,26 +72,36 @@ class AsyncImagePublisher(Node):
         self.loop.create_task(self.publish_images())
         self.loop.run_forever()
 
+    # async def fetch_images(self):
+    #     async with aiohttp.ClientSession() as session:
+    #         while rclpy.ok():
+    #             tasks = [session.get(self.camera_url) for _ in range(NUM_REQUESTS)]
+    #             for task in asyncio.as_completed(tasks):
+    #                 try:
+    #                     response = await task
+    #                 except Exception as e:
+    #                     self.get_logger().error(f"Request error: {e}")
+    #                     continue
+    #                 if response.status == 200:
+    #                     data = await response.json()
+    #                     await self.image_queue.put(data)
+    #                 else:
+    #                     self.get_logger().warn(f"Failed to fetch image, status code: {response.status}")
+
     async def fetch_images(self):
         async with aiohttp.ClientSession() as session:
+            task = session.get(self.camera_url)
             while rclpy.ok():
-                # making requests refferign the number of NUM_REQUESTS
-                tasks = [session.get(self.camera_url) for _ in range(NUM_REQUESTS)]
-                # MODIFIED(This can solve burst problem)
-                for task in asyncio.as_completed(tasks):
-                    try:
-                        response = await task
-                    except Exception as e:
-                        self.get_logger().error(f"Request error: {e}")
-                        continue
+                try:
+                    response = await task
+                    task = session.get(self.camera_url)
                     if response.status == 200:
                         data = await response.json()
                         await self.image_queue.put(data)
                     else:
                         self.get_logger().warn(f"Failed to fetch image, status code: {response.status}")
-                # 次
-                # await asyncio.sleep(0.2)
-
+                except Exception as e:
+                    self.get_logger().error(f"Request error: {e}")
 
     async def process_image(self, key: str, data: dict, timestamp, publisher, info, info_publisher, frame_id: str):
         loop = asyncio.get_running_loop()

@@ -39,8 +39,9 @@ class RosTimerImagePublisher(Node):
         super().__init__('async_image_publisher')
 
         self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
-        self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/screenshot"
-        
+        # self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/screenshot"        
+        self.camera_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value+"/v2/front"
+
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,

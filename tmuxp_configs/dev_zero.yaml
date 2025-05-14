@@ -8,12 +8,12 @@ windows:
       - source /opt/ros/humble/setup.bash
       - source install/local_setup.bash
     panes:
+    # - shell_command:
+    #   - ros2 launch earthrovers_bringup rover_tf_launch.py
     - shell_command:
-      - ros2 launch earthrovers_bringup rover_tf_launch.py
-    - shell_command:
-      - ros2 run earthrovers_base base --ros-args --log-level debug -p earthrover_sdk_url:=http://localhost:8000 -p max_speed_ms:=1.0 -p max_angular_speed_rads:=1.0
-    - shell_command:
-      - ros2 run earthrovers_navigation nav
+      - ros2 run earthrovers_base base --ros-args --log-level debug -p earthrover_sdk_url:=http://localhost:8000 -p max_speed_ms:=1.0 -p max_angular_speed_rads:=1.0 -p robot_type:=zero
+    # - shell_command:
+    #   - ros2 run earthrovers_navigation nav
     - shell_command:
       - ros2 run earthrovers_navigation waypoint_receiver --ros-args -p earthrover_sdk_url:=http://localhost:8000
     - shell_command:
@@ -22,5 +22,7 @@ windows:
       - ros2 run teleop_twist_keyboard teleop_twist_keyboard
     - shell_command:
       - ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765
+    - shell_command:
+      - ros2 run earthrovers_state_estimation yaw_estimator_node
 options:
   mouse: on  # Enable mouse mode
