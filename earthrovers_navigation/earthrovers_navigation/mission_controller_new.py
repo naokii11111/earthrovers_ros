@@ -40,9 +40,7 @@ class WaypointReceiverNode(Node):
 
         # Make timers
         self.reached_last_checkpoint = False
-        get_checkpoint_list_period = 3.0
-        check_checkpoint_reached_period = 3.0
-        # self.create_timer(get_checkpoint_list_period, self.get_checkpoints_list)
+        check_checkpoint_reached_period = 1.0
         self.create_timer(check_checkpoint_reached_period, self.check_checkpoint_reached)
 
         self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")

@@ -37,6 +37,8 @@ class YawEstimatorNode(Node):
         self.compass_yaw = None
 
         self.orientation_pub = self.create_publisher(Float32, '/orientation_filtered', 10)
+
+        self.yaw_rate_pub = self.create_publisher(Float32, '/yaw_rate', 10)
         
         self.t_opt = 0.0
         self.t_comp = 0.0
@@ -60,7 +62,7 @@ class YawEstimatorNode(Node):
         self.kf.F = np.eye(2)
         self.kf.H = np.array([[1, 0]])           # We observe yaw (from compass)
         self.kf.P *= 10.0
-        self.kf.R = np.array([[10]])            # Compass noise
+        self.kf.R = np.array([[0.1]])            # Compass noise
         self.kf.Q = np.array([[0.00001, 0],         # Process noise
                             [0, 0.00001]])
         self.kf_time = None  # timestamp of last filter update
@@ -88,11 +90,28 @@ class YawEstimatorNode(Node):
     
     def kf_update(self, compass_yaw):
         if self.kf_time is not None:
-            dt = (self.t_comp - self.kf_time)
-            self.kf.F = np.array([[1, dt],
-                                [0, 1]])
+            # dt = (self.t_comp - self.kf_time)
+            # self.kf.F = np.array([[1, dt],
+            #                     [0, 1]])
             # self.kf.predict()
+
+            # Make sure the yaw update interpolates through the shorter path
+            if abs(compass_yaw - self.kf.x[0, 0]) > np.pi:
+                if compass_yaw > self.kf.x[0, 0]:
+                    compass_yaw -= 2 * np.pi
+                else:
+                    compass_yaw += 2 * np.pi
+
             self.kf.update(np.array([[compass_yaw]]))
+
+            # Make sure the yaw is in the range [-pi, pi]
+            yaw = self.kf.x[0, 0]
+            if yaw > np.pi:
+                yaw -= 2 * np.pi
+            elif yaw < -np.pi:
+                yaw += 2 * np.pi
+            self.kf.x[0, 0] = yaw
+
             self.kf_time = self.t_opt #self.t_comp
             
     def get_kf_output(self):
@@ -195,12 +214,16 @@ class YawEstimatorNode(Node):
                         if count > 0:
                             avg_dx = dx / count
                             if dt > 0 and self.compass_yaw is not None:
-                                self.yaw_rate = - avg_dx/self.image_size[0] * self.fov / dt *2
+                                self.yaw_rate = - avg_dx/self.image_size[0] * self.fov / dt
+                                self.yaw_rate = np.clip(self.yaw_rate, -2/5*np.pi, 2/5*np.pi)
                                 self.kf_predict(self.yaw_rate[0])
                                 self.yaw_est = self.get_kf_output()
                                 if self.compass_yaw is not None : 
                                     self.get_logger().info(f"Estimated yaw rate: {self.compass_yaw:.4f} , {self.yaw_est:.4f}, {self.yaw_rate[0]:.8f} rad/s, Bias {self.kf.x[1, 0]}")
-                
+                                # Publish yaw rate
+                                yaw_rate_msg = Float32()
+                                yaw_rate_msg.data = self.yaw_rate[0].item()
+                                self.yaw_rate_pub.publish(yaw_rate_msg)
                 except cv2.error as e:
                     self.get_logger().warn(f"Optical flow failed: {str(e)}")  
         
