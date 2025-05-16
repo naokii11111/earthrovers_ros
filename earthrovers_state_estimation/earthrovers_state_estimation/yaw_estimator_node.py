@@ -12,7 +12,7 @@ import numpy as np
 
 from filterpy.kalman import KalmanFilter
 from scipy.interpolate import UnivariateSpline
-from kf_utils import kf_predict, kf_update
+from earthrovers_state_estimation.kf_utils import kf_predict, kf_update
 
 from collections import deque
 
@@ -104,7 +104,7 @@ class YawEstimatorNode(Node):
         self.last_stamp = None
         self.compass_yaw = None
         self.max_yaw_rate = 3/5*np.pi
-        self.yaw_rate_correction = 2.0
+        self.yaw_rate_correction = 1.5
         
         self.camera_count= 0
         
@@ -132,9 +132,9 @@ class YawEstimatorNode(Node):
         self.kf_H = np.array([[1, 0]])           # We observe yaw (from compass)
         self.kf_P = np.eye(self.kf_dim_x)
         self.kf_P *= 10.0
-        self.kf_R = np.array([[1]])            # Compass noise
+        self.kf_R = np.array([[0.1]])            # Compass noise
         self.kf_Q = np.array([[0.0001, 0.0],  # Process noise
-                            [0.0, 0.00001]])  # Ensure Q is 3x3
+                            [0.0, 0.0001]])  # Ensure Q is 3x3
         self.kf_time = self.t_opt  # timestamp of last filter update
         self.get_logger().info(f"KF initialized: {self.get_name()}")
         
