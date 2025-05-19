@@ -99,6 +99,9 @@ class YawEstimatorNode(Node):
         self.gps_int_cnt = 0
         self.yaw_rate_pub = self.create_publisher(Float32, '/yaw_rate', 10)
         self.yaw_est_pub = self.create_publisher(Float32, '/orientation_filtered', 10)
+
+        self.dx_pub = self.create_publisher(Float32, '/optical_flow_yaw/flow_avg_dx', 10)
+        self.dy_pub = self.create_publisher(Float32, '/optical_flow_yaw/flow_avg_dy', 10)
         self.ori_pub = self.create_publisher(Float32, '/orientation_comp', 10)
         self.image_pub = self.create_publisher(Image, '/optical_flow_yaw/image_with_arrows', 10)
         self.last_stamp = None
@@ -295,20 +298,35 @@ class YawEstimatorNode(Node):
                         self.prev_gray, gray, self.prev_features, None)
                     if next_features is not None:
                         dx = 0.0
+                        dy = 0.0
                         count = 0
                         for i, st in enumerate(status):
                             if st == 1:
-                                dx += (next_features[i][0] - self.prev_features[i][0])
+                                dx += (next_features[i][0][0] - self.prev_features[i][0][0])
+                                try:
+                                    dy += (next_features[i][0][1] - self.prev_features[i][0][1])
+                                except:
+                                    new = next_features[i]
+                                    old = self.prev_features[i]
+                                    raise ValueError(f"Error in optical flow calculation: {new} - {old}. {dx}")
+
                                 count += 1
 
                         if count > 0:
                             avg_dx = dx / count
+                            avg_dy = dy / count
+                            flow_mag_dx = abs(avg_dx)
+                            flow_mag_dy = abs(avg_dy)
+                            self.dx_pub.publish(Float32(data=float(flow_mag_dx)))
+                            self.dy_pub.publish(Float32(data=float(flow_mag_dy)))
+
                             if dt > 0 and self.compass_yaw is not None:
                                 # Calculate yaw rate
                                 self.yaw_rate = - avg_dx/self.image_size[0] * self.fov / dt * self.yaw_rate_correction
+                                self.tilt_rate = - avg_dy/self.image_size[1] * self.fov / dt * self.yaw_rate_correction
                                 # publish yaw rate
-                                self.yaw_rate_pub.publish(Float32(data=float(np.clip(self.yaw_rate[0], -self.max_yaw_rate, self.max_yaw_rate))))
-                                self.predict(self.yaw_rate[0])
+                                self.yaw_rate_pub.publish(Float32(data=float(np.clip(self.yaw_rate, -self.max_yaw_rate, self.max_yaw_rate))))
+                                self.predict(self.yaw_rate)
                                 self.yaw_est = self.get_kf_output()
                                 yaw_est_deg = np.degrees(self.yaw_est) 
                                 if yaw_est_deg < 0:
@@ -338,8 +356,8 @@ class YawEstimatorNode(Node):
         center = (w // 2, h // 2)
         scale = 500*scaling_factor  # Adjust this scale based on desired arrow length
 
-        end_x = int(center[0] + self.yaw_rate[0] * scale)
-        end_y = int(center[1] + self.yaw_rate[1] * scale)
+        end_x = int(center[0] + self.yaw_rate * scale)
+        end_y = int(center[1] + self.tilt_rate * scale)
 
         # Horizontal arrow (red)
         cv2.arrowedLine(img_with_arrows, center, (end_x, center[1]), (0, 0, 255), 2, tipLength=0.3)
