@@ -15,7 +15,7 @@ windows:
     # - shell_command:
     #   - ros2 run earthrovers_navigation nav
     - shell_command:
-      - ros2 run earthrovers_navigation waypoint_receiver --ros-args -p earthrover_sdk_url:=http://localhost:8000
+      - ros2 run earthrovers_navigation waypoint_receiver --ros-args -p earthrover_sdk_url:=http://localhost:8000 -p checkpoint_reached_source:=distance
     - shell_command:
       - ros2 run earthrovers_vision cameras --ros-args -p earthrover_sdk_url:=http://localhost:8000
     - shell_command:

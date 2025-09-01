@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-geographic-info \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir filterpy scikit-learn \
+RUN pip3 install --no-cache-dir filterpy scikit-learn numpy==1.24.0 \
     && rm -rf /root/.cache/pip
 
 COPY dockerfiles/development/ros_entrypoint.sh /opt/ros_entrypoint.sh

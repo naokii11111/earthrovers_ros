@@ -26,7 +26,7 @@ class WaypointReceiverNode(Node):
         self.waypoints_pub = self.create_publisher(GeoPath, "checkpoints_gps", 10)
 
         self.checkpoints_list = None
-        self.latest_scanned_checkpoint = -1
+        self.latest_scanned_checkpoint = None
 
         # Subscribe to gps for the current position
         self.current_gps = None
@@ -37,14 +37,18 @@ class WaypointReceiverNode(Node):
             10
         )
 
+        self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
+        self.declare_parameter("checkpoint_reached_source", "api") # (api | distance)
+        self.declare_parameter("checkpoint_reached_distance", 10.0) # meters
+        self.earthrover_sdk_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value
+        self.checkpoint_reached_distance = self.get_parameter("checkpoint_reached_distance").get_parameter_value().double_value
+        self.checkpoint_reached_source = self.get_parameter("checkpoint_reached_source").get_parameter_value().string_value
 
         # Make timers
         self.reached_last_checkpoint = False
         check_checkpoint_reached_period = 1.0
         self.create_timer(check_checkpoint_reached_period, self.check_checkpoint_reached)
 
-        self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
-        self.earthrover_sdk_url = self.get_parameter("earthrover_sdk_url").get_parameter_value().string_value
         self.get_checkpoints_list()
 
     def _gps_callback(self, msg):
@@ -97,6 +101,7 @@ class WaypointReceiverNode(Node):
         current_gps_lon = np.radians(self.current_gps.longitude)
         checkpoint_lat = np.radians(self.checkpoints_list.poses[self.latest_scanned_checkpoint].pose.position.latitude)
         checkpoint_lon = np.radians(self.checkpoints_list.poses[self.latest_scanned_checkpoint].pose.position.longitude)
+
         # Calculate the distance to the checkpoint
         distance = haversine_distances(
             [[current_gps_lat, current_gps_lon], [checkpoint_lat, checkpoint_lon]]
@@ -104,29 +109,40 @@ class WaypointReceiverNode(Node):
         distance = distance[0][1]
         self.get_logger().info(f"Distance to next checkpoint: {distance} m.")
 
-        if distance < 15.0:
-            start_time = time.time()
-            checkpoint_reached_response = requests.post(f"{self.earthrover_sdk_url}/checkpoint-reached", json={})
-            try:
-                checkpoint_reached_response_json = checkpoint_reached_response.json()
-            except Exception as e:
-                self.get_logger().warn("Failed to parse checkpoint reached response.")
-                checkpoint_reached_response_json = None
+        if self.checkpoint_reached_source == 'distance':
+            if distance < self.checkpoint_reached_distance:
+                if self.latest_scanned_checkpoint < len(self.checkpoints_list.poses)-1:
+                    self.latest_scanned_checkpoint += 1
+                else:
+                    self.get_logger().info("Reached the last checkpoint.")
+                    self.reached_last_checkpoint = True
 
-            if checkpoint_reached_response_json is not None:
-                print(f"Checkpoint reached response: {checkpoint_reached_response_json}")
-                print(f"Time taken to get checkpoint reached response: {time.time() - start_time}")
+        elif self.checkpoint_reached_source == 'api':
 
-                if checkpoint_reached_response.status_code == 400:
-                    if checkpoint_reached_response_json["detail"]["proximate_distance_to_checkpoint"] is None:
-                        self.get_logger().info("Reached the last checkpoint.")
-                        self.reached_last_checkpoint = True
-                elif checkpoint_reached_response.status_code == 200:
-                    if checkpoint_reached_response_json["next_checkpoint_sequence"] is None:
-                        self.reached_last_checkpoint = True
-                        self.latest_scanned_checkpoint = len(self.checkpoints_list.poses)-1
-                    else:
-                        self.latest_scanned_checkpoint = checkpoint_reached_response_json["next_checkpoint_sequence"]-1
+            # Get the latest scanned checkpoint from the API.
+            if distance < 15.0:
+                start_time = time.time()
+                checkpoint_reached_response = requests.post(f"{self.earthrover_sdk_url}/checkpoint-reached", json={})
+                try:
+                    checkpoint_reached_response_json = checkpoint_reached_response.json()
+                except Exception as e:
+                    self.get_logger().warn("Failed to parse checkpoint reached response.")
+                    checkpoint_reached_response_json = None
+
+                if checkpoint_reached_response_json is not None:
+                    print(f"Checkpoint reached response: {checkpoint_reached_response_json}")
+                    print(f"Time taken to get checkpoint reached response: {time.time() - start_time}")
+
+                    if checkpoint_reached_response.status_code == 400:
+                        if checkpoint_reached_response_json["detail"]["proximate_distance_to_checkpoint"] is None:
+                            self.get_logger().info("Reached the last checkpoint.")
+                            self.reached_last_checkpoint = True
+                    elif checkpoint_reached_response.status_code == 200:
+                        if checkpoint_reached_response_json["next_checkpoint_sequence"] is None:
+                            self.reached_last_checkpoint = True
+                            self.latest_scanned_checkpoint = len(self.checkpoints_list.poses)-1
+                        else:
+                            self.latest_scanned_checkpoint = checkpoint_reached_response_json["next_checkpoint_sequence"]-1
 
         pose_list = self.checkpoints_list.poses[self.latest_scanned_checkpoint:]
         checkpoints_list = GeoPath()

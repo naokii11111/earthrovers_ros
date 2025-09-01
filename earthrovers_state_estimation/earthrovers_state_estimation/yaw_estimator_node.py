@@ -303,12 +303,7 @@ class YawEstimatorNode(Node):
                         for i, st in enumerate(status):
                             if st == 1:
                                 dx += (next_features[i][0][0] - self.prev_features[i][0][0])
-                                try:
-                                    dy += (next_features[i][0][1] - self.prev_features[i][0][1])
-                                except:
-                                    new = next_features[i]
-                                    old = self.prev_features[i]
-                                    raise ValueError(f"Error in optical flow calculation: {new} - {old}. {dx}")
+                                dy += (next_features[i][0][1] - self.prev_features[i][0][1])
 
                                 count += 1
 
@@ -341,7 +336,7 @@ class YawEstimatorNode(Node):
                 except cv2.error as e:
                     self.get_logger().warn(f"Optical flow failed: {str(e)}")  
         #print(self.compass_yaw)
-        if self.compass_yaw is not None : self.draw_arrows(cv_image)
+        #if self.compass_yaw is not None : self.draw_arrows(cv_image)
 
         # Prepare for next frame
 
