@@ -4,7 +4,8 @@
 cd /earthrovers_ws && \
 sudo apt-get update && \
 rosdep update --rosdistro $ROS_DISTRO && \
-rosdep install --from-paths src -y -r --ignore-src
+rosdep install --from-paths src -y -r --ignore-srcs
+sudo apt-get install ros-humble-teleop-twist-joy
 
 # Build workspace
 source /opt/ros/humble/setup.bash && \

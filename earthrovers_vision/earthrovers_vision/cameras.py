@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import threading
 import yaml
+from pathlib import Path
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
@@ -29,6 +30,18 @@ def get_camera_params(filepath: str) -> CameraInfo:
         camera_info.r = camera_params["rectification_matrix"]["data"]
         camera_info.p = camera_params["projection_matrix"]["data"]
     return camera_info
+
+
+def get_camera_calibration_path(filename: str) -> str:
+    source_path = Path(__file__).resolve().parents[1] / "config" / "camera_calibration" / filename
+    if source_path.exists():
+        return str(source_path)
+
+    share_path = Path(get_package_share_directory("earthrovers_vision")) / filename
+    if share_path.exists():
+        return str(share_path)
+
+    return str(source_path)
 
 class AsyncImagePublisher(Node):
     """
@@ -52,7 +65,7 @@ class AsyncImagePublisher(Node):
 
         self.front_camera_url = f"{self.sdk_base_url}/v2/front"
         self.rear_camera_url = f"{self.sdk_base_url}/v2/rear"
-        self.map_camera_url = f"{self.sdk_base_url}/screenshot"
+        self.map_camera_url = f"{self.sdk_base_url}/screenshot?view_types=map"
 
         self.get_logger().info(f"Fetching front images from: {self.front_camera_url}")
         self.get_logger().info(f"Rear frame publishing enabled: {self.publish_rear_frame}")
@@ -70,8 +83,8 @@ class AsyncImagePublisher(Node):
 
         self.bridge = CvBridge()
 
-        front_path = f"{get_package_share_directory('earthrovers_vision')}/front_camera.yaml"
-        rear_path = f"{get_package_share_directory('earthrovers_vision')}/rear_camera.yaml"
+        front_path = get_camera_calibration_path("front_camera.yaml")
+        rear_path = get_camera_calibration_path("rear_camera.yaml")
         self.front_info = get_camera_params(front_path)
         self.rear_info = get_camera_params(rear_path)
 

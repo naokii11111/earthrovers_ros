@@ -17,8 +17,6 @@ import numpy as np
 import cv2
 from cv_bridge import CvBridge
 
-from ament_index_python.packages import get_package_share_directory
-
 import os
 
 def get_camera_params(filepath: str) -> CameraInfo:
@@ -38,6 +36,10 @@ def get_camera_params(filepath: str) -> CameraInfo:
 
     return camera_info
 
+
+def get_camera_calibration_path(filename: str) -> str:
+    return str(Path(__file__).resolve().parents[1] / "earthrovers_vision" / "config" / "camera_calibration" / filename)
+
 class CameraNode(Node):
     """Node that periodically gets camera images from the Earth Rover SDK and
     publishes them to their respective topic.
@@ -49,8 +51,8 @@ class CameraNode(Node):
         self.declare_parameter("earthrover_sdk_url", "http://host.docker.internal:8000")
         self.declare_parameter("front_camera_framerate", 10)
         self.declare_parameter("rear_camera_framerate", 10)
-        self.declare_parameter("front_camera_params_filepath", "/earthrovers_ws/src/earthrovers_ros/config/camera_calibration/front_camera.yaml")
-        self.declare_parameter("rear_camera_params_filepath", "/earthrovers_ws/src/earthrovers_ros/config/camera_calibration/rear_camera.yaml")
+        self.declare_parameter("front_camera_params_filepath", get_camera_calibration_path("front_camera.yaml"))
+        self.declare_parameter("rear_camera_params_filepath", get_camera_calibration_path("rear_camera.yaml"))
 
         # Create publishers for front camera messages.
         self._front_camera_pub = self.create_publisher(msg_type=Image,
@@ -83,7 +85,7 @@ class CameraNode(Node):
         #                                           callback=self._get_and_publish_map_image)
 
         # Try to parse the front camera's calibration parameters.
-        front_camera_params_filepath = f"{get_package_share_directory('earthrovers_vision')}/front_camera.yaml"
+        front_camera_params_filepath = get_camera_calibration_path("front_camera.yaml")
         self._front_camera_info = None
         try:
             self._front_camera_info = get_camera_params(front_camera_params_filepath)
@@ -92,7 +94,7 @@ class CameraNode(Node):
             raise e
 
         # Try to parse the front camera's calibration parameters.
-        rear_camera_params_filepath = f"{get_package_share_directory('earthrovers_vision')}/rear_camera.yaml"
+        rear_camera_params_filepath = get_camera_calibration_path("rear_camera.yaml")
         self._rear_camera_info = None
         try:
             self._rear_camera_info = get_camera_params(rear_camera_params_filepath)

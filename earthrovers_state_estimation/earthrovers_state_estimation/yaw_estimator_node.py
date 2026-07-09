@@ -6,6 +6,8 @@ from sensor_msgs.msg import MagneticField
 from sensor_msgs.msg import NavSatFix  # Import the GPS message type
 from cv_bridge import CvBridge
 from std_msgs.msg import Float32
+import yaml
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -13,6 +15,7 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 from scipy.interpolate import UnivariateSpline
 from earthrovers_state_estimation.kf_utils import kf_predict, kf_update
+from ament_index_python.packages import get_package_share_directory
 
 from collections import deque
 
@@ -196,29 +199,39 @@ class YawEstimatorNode(Node):
                 self.gps_yaw = gps_yaw
         
     def init_camera(self):
-        # 你的相机内参
-        self.fx = 407.86023253
-        self.fy = 407.86605705
-        self.cx = 533.30109486
-        self.cy = 278.69939958
-        self.K = np.array([[407.86023253, 0., 533.30109486],
-                          [0., 407.86605705, 278.69939958],
-                          [0., 0., 1.]])
+        calibration_path = self.resolve_camera_calibration_path("front_camera.yaml")
+        with open(calibration_path, "r") as calibration_file:
+            camera_params = yaml.safe_load(calibration_file)
 
-        # 你的畸变系数
-        self.D = np.array([-0.2171785, 0.05372816, 0.00185307, -0.0021051, -0.00599918])
-        self.R = np.array([
-            [1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1]
-        ])
-        #self.D = np.array([-0.792, -0.597, -0.184, 0, 0], dtype=np.float32)  # [k1, k2, p1, p2, k3]
-        self.image_size = (1024, 576)
+        self.image_size = (camera_params["image_width"], camera_params["image_height"])
+        camera_matrix = np.array(camera_params["camera_matrix"]["data"], dtype=np.float64).reshape(3, 3)
+        self.K = camera_matrix
+        self.D = np.array(camera_params["distortion_coefficients"]["data"], dtype=np.float64)
+        self.R = np.array(camera_params["rectification_matrix"]["data"], dtype=np.float64).reshape(3, 3)
+
+        self.fx = self.K[0, 0]
+        self.fy = self.K[1, 1]
+        self.cx = self.K[0, 2]
+        self.cy = self.K[1, 2]
+
         self.fov = 2* np.arctan2(self.image_size[0],(self.fx*2))
         print(f"FOV: {self.fov:.4f} rad")
         # Compute undistortion maps once
         self.map1, self.map2 = cv2.initUndistortRectifyMap(
             self.K, self.D, self.R, self.K, self.image_size, cv2.CV_16SC2)
+
+    def resolve_camera_calibration_path(self, filename: str) -> Path:
+        source_path = Path(__file__).resolve().parents[2] / "earthrovers_vision" / "config" / "camera_calibration" / filename
+        if source_path.exists():
+            return source_path
+
+        installed_candidate = Path(get_package_share_directory("earthrovers_vision")) / filename
+        if installed_candidate.exists():
+            return installed_candidate
+
+        raise FileNotFoundError(
+            f"Could not find calibration file '{filename}' in source tree or installed package share"
+        )
         
     def compass_callback(self, msg):
         if self.compass_yaw is None:
